@@ -1,5 +1,5 @@
 import { openai } from '@ai-sdk/openai';
-import { streamText } from 'ai';
+import { generateText } from 'ai';
 
 export const runtime = 'edge';
 
@@ -12,7 +12,6 @@ export async function POST(req: Request) {
     const { messages } = await req.json();
     
     console.log('=== API CALLED ===');
-    console.log('Received messages:', JSON.stringify(messages, null, 2));
     
     // Convert UI messages to model format
     const modelMessages = messages.map((msg: any) => ({
@@ -25,51 +24,61 @@ export async function POST(req: Request) {
         : msg.content || '',
     }));
     
-    console.log('Model messages:', JSON.stringify(modelMessages, null, 2));
+    // Get the last user message as the prompt
+    const lastMessage = modelMessages[modelMessages.length - 1];
+    const prompt = lastMessage.content;
     
-    // Generate AI response with streaming
-    const result = streamText({
-      model: openai('gpt-4o'),
+    // Generate AI response
+    console.log('Calling generateText with prompt:', prompt);
+    console.log('Using API key (first 10 chars):', process.env.OPENAI_API_KEY?.substring(0, 10));
+    
+    // Try gpt-3.5-turbo first (works on free tier)
+    const { text } = await generateText({
+      model: openai('gpt-3.5-turbo'), // Changed from gpt-4o
       system: 'You are a helpful assistant.',
-      messages: modelMessages,
-      temperature: 0.7,
-    });
-
-    // Collect full response for logging
-    let fullResponse = '';
-    const chunks: string[] = [];
+      prompt: prompt,
+    }); 
     
-    // Create a readable stream that logs everything
+    console.log('=== GENERATED TEXT ===');
+    console.log(text);
+    console.log('Text length:', text.length);
+    
+    // Format as UI message stream response
+    // Create a simple stream with the text
+    const encoder = new TextEncoder();
     const stream = new ReadableStream({
-      async start(controller) {
-        try {
-          for await (const chunk of result.textStream) {
-            chunks.push(chunk);
-            fullResponse += chunk;
-            console.log('CHUNK:', chunk);
-            controller.enqueue(new TextEncoder().encode(chunk));
-          }
-          console.log('=== FULL RESPONSE ===');
-          console.log(fullResponse);
-          console.log('=== END RESPONSE ===');
-          controller.close();
-        } catch (err) {
-          console.error('Stream error:', err);
-          controller.error(err);
-        }
+      start(controller) {
+        // Send the assistant message in the format expected by @ai-sdk/react
+        const message = JSON.stringify({
+          id: `msg-${Date.now()}`,
+          role: 'assistant',
+          parts: [{ type: 'text', text: text }],
+        });
+        controller.enqueue(encoder.encode(`0:${JSON.stringify(message)}\n`));
+        controller.close();
       },
     });
 
     return new Response(stream, {
       headers: {
         'Content-Type': 'text/plain; charset=utf-8',
+        'X-Vercel-AI-Data-Stream': 'v1',
       },
     });
   } catch (error) {
     console.error('=== CHAT API ERROR ===');
     console.error(error);
+    
+    // Check if it's a quota error
+    const errorMessage = error instanceof Error ? error.message : 'Failed to process message';
+    const isQuotaError = errorMessage.includes('quota') || errorMessage.includes('insufficient_quota');
+    
     return new Response(
-      JSON.stringify({ error: error instanceof Error ? error.message : 'Failed to process message' }),
+      JSON.stringify({ 
+        error: isQuotaError 
+          ? 'OpenAI API quota exceeded. Please check your billing and add credits to your account.'
+          : errorMessage 
+      }),
       { status: 500, headers: { 'Content-Type': 'application/json' } }
     );
   }

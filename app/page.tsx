@@ -4,7 +4,7 @@ import { useState, useEffect } from 'react';
 import { useChat } from '@ai-sdk/react';
 
 export default function ChatPage() {
-  const { messages, status, sendMessage } = useChat();
+  const { messages, status, sendMessage, error } = useChat();
   const [input, setInput] = useState('');
   const isLoading = status !== 'ready';
 
@@ -42,6 +42,13 @@ export default function ChatPage() {
 
       {/* Messages */}
       <div className="flex-1 overflow-y-auto px-6 py-4 space-y-4">
+        {error && (
+          <div className="bg-red-100 border border-red-400 text-red-700 px-4 py-3 rounded mb-4">
+            <p className="font-bold">Error:</p>
+            <p>{error.message}</p>
+          </div>
+        )}
+        
         {messages.length === 0 && (
           <div className="text-center text-gray-500 mt-8">
             <p className="text-lg">👋 Welcome! Ask me anything.</p>
